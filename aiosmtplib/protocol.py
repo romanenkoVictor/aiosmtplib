@@ -198,6 +198,11 @@ class SMTPProtocol(FlowControlMixin, asyncio.Protocol):
         offset = 0
         message_complete = False
 
+        if self.__is_pipelining_response(self._buffer.decode().split("\r\n")):
+            message_complete = True
+            offset = len(self._buffer)
+            message = self._buffer
+
         while True:
             line_end_index = self._buffer.find(b"\n", offset)
             if line_end_index == -1:
@@ -234,6 +239,16 @@ class SMTPProtocol(FlowControlMixin, asyncio.Protocol):
             return response
         else:
             return None
+
+    @staticmethod
+    def __is_pipelining_response(messages: [str]) -> bool:
+        result = 0
+        messages = list(filter(len, messages))
+        for message in messages:
+            is_extension_message = message[3:4] == "-"
+            if not is_extension_message:
+                result += 1
+        return len(messages) > 1 and len(messages) == result
 
     async def read_response(self, timeout: Optional[float] = None) -> SMTPResponse:
         """
