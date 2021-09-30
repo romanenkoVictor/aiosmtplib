@@ -11,15 +11,16 @@ import asyncio
 import email.message
 from typing import Dict, Iterable, Optional, Sequence, Tuple, Union
 
+from . import SMTPStatus
 from .auth import SMTPAuth
 from .connection import SMTPConnection
 from .default import Default, _default
-from .email import extract_recipients, extract_sender, flatten_message
+from .email import extract_recipients, extract_sender, flatten_message, quote_address
 from .errors import (
     SMTPNotSupported,
     SMTPRecipientRefused,
     SMTPRecipientsRefused,
-    SMTPResponseException,
+    SMTPResponseException, SMTPSenderRefused,
 )
 from .response import SMTPResponse
 from .sync import async_to_sync
@@ -158,15 +159,24 @@ class SMTP(SMTPAuth):
                 mail_options.insert(0, size_option)
 
             try:
-                await self.mail(
-                    sender,
-                    options=mail_options,
-                    encoding=mailbox_encoding,
-                    timeout=timeout,
-                )
-                recipient_errors = await self._send_recipients(
-                    recipients, rcpt_options, encoding=mailbox_encoding, timeout=timeout
-                )
+                if self.supports_extension("pipelining"):
+                    await self.__send_mail_and_recipients(
+                        sender,
+                        recipients,
+                        options=mail_options,
+                        encoding=mailbox_encoding,
+                        timeout=timeout,
+                    )
+                else:
+                    await self.mail(
+                        sender,
+                        options=mail_options,
+                        encoding=mailbox_encoding,
+                        timeout=timeout,
+                    )
+                    await self._send_recipients(
+                        recipients, rcpt_options, encoding=mailbox_encoding, timeout=timeout
+                    )
                 response = await self.data(message, timeout=timeout)
             except (SMTPResponseException, SMTPRecipientsRefused) as exc:
                 # If we got an error, reset the envelope.
@@ -178,7 +188,27 @@ class SMTP(SMTPAuth):
                     pass
                 raise exc
 
-        return recipient_errors, response.message
+        return {}, response.message
+
+    async def __send_mail_and_recipients(
+            self,
+            sender: str,
+            recipients: [str],
+            options: list,
+            timeout: float,
+            encoding: str = "ascii",
+    ) -> None:
+        await self._ehlo_or_helo_if_needed()
+
+        commands = [b"MAIL FROM: " + quote_address(sender).encode(encoding)]
+        for recipient in recipients:
+            commands.append(b"RCPT TO: " + quote_address(recipient).encode(encoding))
+
+        await self.__send_mail_and_recipients_response_handle(
+            sender,
+            recipients,
+            await self.execute_command(*commands, *[option.encode("ascii") for option in options], timeout=timeout)
+        )
 
     async def _send_recipients(
         self,
@@ -186,11 +216,7 @@ class SMTP(SMTPAuth):
         options: Iterable[str],
         encoding: str = "ascii",
         timeout: Optional[Union[float, Default]] = _default,
-    ) -> Dict[str, SMTPResponse]:
-        """
-        Send the recipients given to the server. Used as part of
-        :meth:`.sendmail`.
-        """
+    ) -> None:
         recipient_errors = []
         for address in recipients:
             try:
@@ -200,15 +226,24 @@ class SMTP(SMTPAuth):
             except SMTPRecipientRefused as exc:
                 recipient_errors.append(exc)
 
-        if len(recipient_errors) == len(recipients):
+        if len(recipient_errors) > 0:
             raise SMTPRecipientsRefused(recipient_errors)
 
-        formatted_errors = {
-            err.recipient: SMTPResponse(err.code, err.message)
-            for err in recipient_errors
-        }
+    @staticmethod
+    async def __send_mail_and_recipients_response_handle(sender: str, recipients: [str], response: SMTPResponse) -> None:
+        messages = list(filter(len, response.message.split("\r\n")))
+        sender_message = messages.pop(0)
+        code = int(sender_message[:3])
+        if code != SMTPStatus.completed:
+            raise SMTPSenderRefused(code, sender_message[3:], sender)
 
-        return formatted_errors
+        recipient_errors = []
+        for idx, recipient in enumerate(recipients):
+            code = int(messages[idx][:3])
+            if code not in (SMTPStatus.completed, SMTPStatus.will_forward):
+                recipient_errors.update(SMTPSenderRefused(code, messages[idx][3:], recipient))
+        if len(recipient_errors) > 0:
+            raise SMTPRecipientsRefused(recipient_errors)
 
     async def send_message(
         self,
