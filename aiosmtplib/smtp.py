@@ -11,7 +11,6 @@ import asyncio
 import email.message
 from typing import Dict, Iterable, Optional, Sequence, Tuple, Union
 
-from . import SMTPStatus
 from .auth import SMTPAuth
 from .connection import SMTPConnection
 from .default import Default, _default
@@ -231,6 +230,7 @@ class SMTP(SMTPAuth):
 
     @staticmethod
     async def __send_mail_and_recipients_response_handle(sender: str, recipients: [str], response: SMTPResponse) -> None:
+        from . import SMTPStatus
         messages = list(filter(len, response.message.split("\r\n")))
         sender_message = messages.pop(0)
         code = int(sender_message[:3])
