@@ -198,10 +198,10 @@ class SMTPProtocol(FlowControlMixin, asyncio.Protocol):
         offset = 0
         message_complete = False
 
-        if self.__is_pipelining_response(self._buffer.decode().split("\r\n")):
-            message_complete = True
-            offset = len(self._buffer)
-            message = self._buffer
+        # if self.__is_pipelining_response(self._buffer.decode().split("\r\n")):
+        #     message_complete = True
+        #     offset = len(self._buffer)
+        #     message = self._buffer
 
         while True:
             line_end_index = self._buffer.find(b"\n", offset)

@@ -158,24 +158,24 @@ class SMTP(SMTPAuth):
                 mail_options.insert(0, size_option)
 
             try:
-                if self.supports_extension("pipelining"):
-                    await self.__send_mail_and_recipients(
-                        sender,
-                        recipients,
-                        options=mail_options,
-                        encoding=mailbox_encoding,
-                        timeout=timeout,
-                    )
-                else:
-                    await self.mail(
-                        sender,
-                        options=mail_options,
-                        encoding=mailbox_encoding,
-                        timeout=timeout,
-                    )
-                    await self._send_recipients(
-                        recipients, rcpt_options, encoding=mailbox_encoding, timeout=timeout
-                    )
+                # if self.supports_extension("pipelining"):
+                #     await self.__send_mail_and_recipients(
+                #         sender,
+                #         recipients,
+                #         options=mail_options,
+                #         encoding=mailbox_encoding,
+                #         timeout=timeout,
+                #     )
+                # else:
+                await self.mail(
+                    sender,
+                    options=mail_options,
+                    encoding=mailbox_encoding,
+                    timeout=timeout,
+                )
+                await self._send_recipients(
+                    recipients, rcpt_options, encoding=mailbox_encoding, timeout=timeout
+                )
                 response = await self.data(message, timeout=timeout)
             except (SMTPResponseException, SMTPRecipientsRefused) as exc:
                 # If we got an error, reset the envelope.
